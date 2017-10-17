@@ -8,6 +8,23 @@
   * Breathing is based on bpm
   * Robot-heart beats based on bpm
 
+  Plan:
+  * strip back to BPM
+  * make a fake BPM
+  * add lcd
+  * incrementally do lcd
+  * add LED analog for solenoid
+  * add LED analog for cam-motor
+  * map cam-motor to RPM for led
+  * add sound sketch
+  -- w/nilam
+  * add lcd pics
+  * add solenoid: TIP120
+  * add cam-motor: TIP120
+  * get mp3 player
+  ---
+  * add sound
+
 */
 
 #include "state_machine.h" // awg's state machine stuff: https://github.com/awgrover/misc_arduino_tools
@@ -44,20 +61,21 @@ const int CurrentBreathingRate = MinBreathe; // got to start somewhere
 const int MinOurBeat = 40; // lowest beat rate we want to do: correspond to MinBPM
 const int MaxOurBeat = 80; // highest beat rate we want to do: correspond to MaxBPM
 const int CurrentBeatRate = MinBeat; // got to start somewhere
-const structure BeatExemplar {
-  int hardDuration; // time it takes to drive solenoid fully out: "beat". and any hold time
-  int restingDuration; // time between beats.
-    // total should be 60 seconds
+structure BeatParts {
+  unsigned long hardDuration; // time it takes to drive solenoid fully out: "beat". and any hold time
+  unsigned long hardRest; // time between beats.
+    // total should be 60,000 millis (60 seconds)
     // expandable to "ba-dump" eventually
   };
-BeatExemplar Beat = { 1, 59 };
+const BeatParts BeatExemplar = { 1000, 59000 };
+
 // Define heart beat using statemachine
-int hardBeatDuration, restingDuration; //have to convert "per-minute" to durations
+BeatParts Beat; //have to convert "per-minute" to durations
 SIMPLESTATEAS(start_hard_beat, sm_analogWrite<HeartPin, HardBeat>, hold_hard_beat)
-SIMPLESTATEAS(hold_hard_beat, sm_delay< hardBeatDuration >, hard_relax)
+SIMPLESTATEAS(hold_hard_beat, sm_delay< Beat.hardDuration >, hard_relax)
 SIMPLESTATEAS(hard_relax, relaxHeart, 0>, hold_hard_relax)
-SIMPLESTATEAS(hold_hard_relax, sm_delay< restingDuration >, start_hard_beat)
-// FIXME: extend with "ba-dump"
+SIMPLESTATEAS(hold_hard_relax, sm_delay< Beat.hardRest >, start_hard_beat)
+  // maybe add soft beat?
 STATEMACHINE(OurHeart, start_hard_beat);
 
 // Eyes (lcd)
@@ -156,8 +174,8 @@ bool relaxHeart() {
   // CurrentBeatRate in per-minute
   // hardbeat..relax = 1 cycle
   // so scale the exemplar
-  hardBeatDuration = 1.0/CurrentBeatRate * Beat.hardDuration:
-  restingDuration = 1.0/CurrentBeatRate * Beat.restingDuration;
+  Beat.hardDuration = 1.0/CurrentBeatRate * BeatExemplar.hardDuration:
+  Beat.hardRest = 1.0/CurrentBeatRate * BeatExemplar.hardRest;
   return true; // move on
 
   }
