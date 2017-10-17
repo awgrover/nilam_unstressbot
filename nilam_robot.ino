@@ -10,7 +10,11 @@
 
 */
 
+#include "state_machine.h" // awg's state machine stuff: https://github.com/awgrover/misc_arduino_tools
+
 // Pulse sensor
+// https://www.adafruit.com/product/1093
+//
 const int PulseSensorPin = A0;
 const int LED_DuringBeat = 13; // turn on this LED whenever the pulse-value > threshold. ie. _during_ beat
 const int Threshold = 512; // 
@@ -47,13 +51,35 @@ const structure BeatExemplar {
     // expandable to "ba-dump" eventually
   };
 BeatExemplar Beat = { 1, 59 };
+// Define heart beat using statemachine
+int hardBeatDuration, restingDuration; //have to convert "per-minute" to durations
+SIMPLESTATEAS(start_hard_beat, sm_analogWrite<HeartPin, HardBeat>, hold_hard_beat)
+SIMPLESTATEAS(hold_hard_beat, sm_delay< hardBeatDuration >, hard_relax)
+SIMPLESTATEAS(hard_relax, relaxHeart, 0>, hold_hard_relax)
+SIMPLESTATEAS(hold_hard_relax, sm_delay< restingDuration >, start_hard_beat)
+// FIXME: extend with "ba-dump"
+STATEMACHINE(OurHeart, start_hard_beat);
 
-// Eyes
+// Eyes (lcd)
+// http://www.14core.com/driving-the-qd320db16nt9481ra-3-2-tft-480x320-lcd-ili9481-wd-mega/
+//
 // In order of the eye pictures ("eye_1", "eye_2"...):
 // Give the corresponding maximum BPM. e.g. { 50, 100 } means: use "eye_1" up through 50 bpm, then "eye_2" up through 100 bpm
 // Probably have 0..min, "absurdly low" and "absurdly high" values
 // first BPM WILL happen when the pulse-sensor is first attached!
-int EyeBins[] = { 40, 50, 60, 80, 120, 140, 200 }; 
+const int EyeBins[] = { 40, 50, 60, 80, 120, 140, 200 }; 
+
+// MP3 sounds
+// https://www.adafruit.com/product/1381
+//
+enum SoundStates = { SoundStart, SoundPlaying, SoundFinished, SoundDeciding };
+SoundStates SoundState = SoundDeciding; // keep track of what we are doing, and coordinate with the interrupt routine
+// Like EyeBins: "sound_1", "sound_2" correspond to BPMs
+// E.g. { 40, 50, 60 } means play "sound_1" when BPM is <= 50
+// NB: The first value is the cutoff for "play nothing", i.e. if bpm <= 40, play nothing.
+const int SoundBins[] = { 40, 50, 60, 80, 120, 140, 200 };
+const int SoundDecideWait = 2000; // after playing a sound, wait this long before DECIDING to play next one
+
 
 void setup() {
   Serial.begin(9600);
@@ -65,54 +91,74 @@ void loop() {
   setBreathingRate();
   runBreathing();
   setOurHeart();
-  runOurHeart();
+  OurHeart.run();
+  playSound();
   }
 
-  void runOurHeart() {
-    // the heart is a solenoid
-    // just do a "beat"
-    enum States = { resting, start_beat_a, hard_beat, hard_relax }; // what a beat looks like
-    static States state = hard_relax; // start relaxed
+void playSound() {
+  // decide when to play some sound on the MP3 thingy
+  static unsigned long next_sound = millis() + 2000; // don't bother at startup for 2seconds
 
-    // FIXME: fix units of all bpms to be bpm
+  // while playing, or when it's time to decide...
+  if (now > next_sound) {
+    switch (SoundState) {
 
-    static int hardBeatDuration, restingDuration; //have to convert "per-minute" to durations
-
-    unsigned long now = millis();
-
-    switch(state) {
-
-      resting : 
-        if (now > end_state) {
-          state = start_beat_a;
-          }
+      SoundStart:
+        // let it play
         break;
 
-      start_beat_a :
-        analogWrite( HeartPin, HardBeat);
-        end_state = now + hardBeatDuration;
-        state = hard_beat;
+      SoundFinished:
+        next_sound = now + SoundDecideWait; // careful, cf. with our enclosing "if".
+        SoundState = SoundDeciding; //
         break;
 
-      hard_beat :
-        if (now > end_state) {
-          state = hard_relax;
-          }
+      SoundDeciding:
+        pickAndPlay();
+        // FIXME: start interrupt player
         break;
-
-      hard_relax : 
-        state = resting;
-        end_state = now + restingDuration;
-
-        // let's only recalculate the durations during a relax
-        // CurrentBeatRate in per-minute
-        // hardbeat..relax = 1 cycle
-        // so scale the exemplar
-        hardBeatDuration = 1.0/CurrentBeatRate * Beat.hardDuration:
-        restingDuration = 1.0/CurrentBeatRate * Beat.restingDuration;
-        break;
-      
       }
+    }
+  
+  }
+
+void pickAndPlay() {
+  // use the BPM, pick a sound and start it
+  static int last_sound = -1; // impossible "last picture" for startup
+  
+  int which_sound = 0;
+  for( int &binmax : EyeBins ) {
+    if (BPM_ForEyes > binmax) {
+      break; // we found the which_sound last time!
+      }
+    which_sound = &binmax - &EyeBins[0]; // it's at least this bin
+    }
+  // if we "fall" out (without using break), which_sound is the last one
+
+  // FIXME: lots of logic could go here:
+  // if it's the same sound, wait twice as long to play it again
+  // if it's the same sound, pick a "short" version: "Listen to my breathing..." then "ah"
+  // pick a random sound from the "which_sound" group: "sound_1_1", "sound_2_2" etc.
+  // use the direction: "That's better"
+  // keep some state so we sound like we know what's been happening...
+
+    last_sound = which_sound;
+    SoundState = SoundStart;
+    
+    // FIXME: what do we do to start a sound? set a var? let interrupt do the right thing?
+
+  }
+
+bool relaxHeart() {
+  // Do the relax part of our heart, which includes recalculating rate
+
+  analogWrite<HeartPin, 0>
+  // let's only recalculate the durations during a relax
+  // CurrentBeatRate in per-minute
+  // hardbeat..relax = 1 cycle
+  // so scale the exemplar
+  hardBeatDuration = 1.0/CurrentBeatRate * Beat.hardDuration:
+  restingDuration = 1.0/CurrentBeatRate * Beat.restingDuration;
+  return true; // move on
 
   }
 
@@ -157,11 +203,14 @@ void updateEyes( int picture_index ) {
 void setBreathingRate() {
   // not much to do, runBreathing() does the actual breathing
   CurrentBreathingRate = map(BPM, MinBPM, MaxBPM, BreathToRPM * MinBreathe, BreathToRPM * MaxBreathe);
+  // maybe a "sleep" rate if bpm == 0
   }
 
 void setOurHeart() {
   // not much to do, runBeat() does the actual beating
+  // FIXME: just use exact BPM? or, slightly slower BPM
   CurrentBeatRate = map(BPM, MinBPM, MaxBPM, MinOurBeat, MaxOurBeat);
+  // maybe a "sleep" rate if bpm == 0
   }
 
 
@@ -239,5 +288,3 @@ void processPulse() {
   Serial.println(BPM_Direction); // BPM will have a different scale than pulse: ~ 80..120
 
 }
-  
-
