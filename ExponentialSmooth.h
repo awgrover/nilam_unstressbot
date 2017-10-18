@@ -1,8 +1,8 @@
 class ExponentialSmooth {
   // a simple formula to sort-of do averaging: exponential smoothing
 
-  float smoothed; // need float for converging, i.e. no rounding loss funniness. use "(int) $thisobject", to get value.
   const float factor; // forces operations to float space, actually a whole number
+  float _smoothed; // need float for converging, i.e. no rounding loss funniness. use "(int) $thisobject", to get value.
 
   public:
 
@@ -10,13 +10,21 @@ class ExponentialSmooth {
   // So, "5" is sort of like taking 5 samples and averaging them.
   ExponentialSmooth(const int factor) : factor(factor) {};
 
-  operator int() const {return (int) smoothed;} // automatically let us be used as an int
-  operator unsigned long() const {return (unsigned long) smoothed;} // automatically let us be used as unsigned long
+  int smoothed() { return (int) _smoothed; }
+  operator int() const { return (int) _smoothed; }
 
   // we intend it to inline
   int average(const int raw_value) { 
-    smoothed = raw_value / factor + smoothed - smoothed / factor; 
-    return (int) smoothed;
+    _smoothed = raw_value / factor + _smoothed - _smoothed / factor; 
+    /*
+    Serial.print("X"); Serial.print((int) this); Serial.print("/");
+    Serial.print(factor); Serial.print(" ");
+    Serial.print(raw_value); Serial.print(" ");
+    Serial.print(_smoothed); Serial.print("|"); Serial.print((int)_smoothed); Serial.print("|"); Serial.print((int) *this);
+    Serial.print(" ");
+    */
+
+    return (int) _smoothed;
     }
 
   };

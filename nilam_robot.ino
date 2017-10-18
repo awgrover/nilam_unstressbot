@@ -11,6 +11,8 @@
   Plan:
   * strip back to BPM
   * make a fake BPM
+    set input_pullup, touch usb-ground:no-peak, otherwise random peaks > 1009..10010
+    looks like it works
   * add lcd
   * incrementally do lcd
   * add LED analog for solenoid
@@ -30,13 +32,17 @@
 #include "state_machine.h" // awg's state machine stuff: https://github.com/awgrover/misc_arduino_tools
 #include "ExponentialSmooth.h"
 
+// uncommenting this turns on some code that fakes bpm
+#define FAKEBPM
 
 // Pulse sensor
 // https://www.adafruit.com/product/1093
 //
 const int PulseSensorPin = A0;
 const int LED_DuringBeat = 13; // turn on this LED whenever the pulse-value > threshold. ie. _during_ beat
-const int Threshold = 512; // 
+const int BeatDebounceBPM = 200; // take the fastest heartrate (~120) times about 4 to give a debounce
+const int BeatDebounce = (1 / BeatDebounceBPM) * 1000; // convert debounce-bpm to millis
+const int Threshold = 1009; // 512; // 
 int BPM_Direction = 0; // positive when BPM is going up, negative when going down, magnitude is how fast the change is. 
 const int BeatAveraging = 5; // adjust for stability/smoothing. for base BPM
 ExponentialSmooth BPM(BeatAveraging); // can use as an int
@@ -44,13 +50,13 @@ ExponentialSmooth BPM(BeatAveraging); // can use as an int
 const int MinBPM = 40; // lowest reasonable
 const int MaxBPM = 180; // highest reasonable
 // Smoothing/BPM derivatives
-// Make smoothers for things that need them, put in the list for updating
+// Make other smoothers for things that need them, put in the list for updating
 ExponentialSmooth BPM_SmoothLong(BeatAveraging * 3); // for sort-of first-derivate. adjust for "inertia"
 const int EyePersistance = BeatAveraging * 4; // smooth over ~4, need responsive, but not change too often
 ExponentialSmooth BPM_ForEyes( BeatAveraging * 4 ); // smooth over ~4, need responsive, but not change too often
 
 // Everything in this list will be updated on each beat
-ExponentialSmooth BPM_Smoothers[] = { BPM, BPM_ForEyes };
+ExponentialSmooth *BPM_Smoothers[] = { &BPM, &BPM_ForEyes, &BPM_SmoothLong }; // refs, no copy
 
 // Breathing just maps BPM to breathing
 const int MotorPin = A1; // pwm control for a cam motor
@@ -101,10 +107,19 @@ SoundStates SoundState = SoundDeciding; // keep track of what we are doing, and 
 const int SoundBins[] = { 40, 50, 60, 80, 120, 140, 200 };
 const int SoundDecideWait = 2000; // after playing a sound, wait this long before DECIDING to play next one
 
+// utility stuff
+template <typename T> int sgn(T val) {
+  // the sign of the value
+  return (T(0) < val) - (val < T(0));
+  }
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   pinMode( LED_DuringBeat, OUTPUT );
+  #ifdef FAKEBPM
+    pinMode( PulseSensorPin, INPUT_PULLUP ); // treat the pin like a cap sensor
+  #endif
+  Serial.print("Heart Debounce ");Serial.println( BeatDebounce );
 }
 
 void loop() {
@@ -123,8 +138,6 @@ void processPulse() {
   // We'll compute BPM and derivatives: BPM_Direction
   
   // debounce needs to be a number much larger than the interval between calls to us
-  const int beat_debounce_bpm = 500; // take the fastest heartrate (~120) times about 4 to give a debounce
-  const int beat_debounce = (1 / beat_debounce_bpm) * 1000; // convert debounce-bpm to millis
   static unsigned long last_beat = millis(); // arbitrary initial value
   static unsigned long beat_debounce_expire = 0; // we'll take first beat
 
@@ -135,23 +148,29 @@ void processPulse() {
   if (during_beat) {
     unsigned long now = millis(); // get it once
 
-    beat_debounce_expire = now + beat_debounce; // keep track of "debounce"
-
     // we invert debounce, must be "off" for the debounce period before a new beat counts
     if (now > beat_debounce_expire ) {
       // a new beat
       digitalWrite(LED_DuringBeat, HIGH); // really only need to turn it on now
 
-      beat_interval = now - last_beat;
+      beat_interval = now - last_beat; // in millis
 
       // BPM and other smoothers
-      for (ExponentialSmooth &smoother : BPM_Smoothers) {
-        smoother.average( beat_interval );
+      for (ExponentialSmooth *smoother : BPM_Smoothers) {
+        // we have interval, want BPM: interval 30 seconds, then 2bpm
+        #ifdef FAKEBPM
+          beat_interval *= 100; // noise is way too fast
+        #endif
+        smoother->average( 60000L / beat_interval );
         }
+      // Serial.println(); // debug
 
       // derivatives
       // by comparing a "fast" smooth with a slower smooth, we get a sort-of 1st derivative
-      BPM_Direction = (int)BPM - BPM_SmoothLong.average( beat_interval ); 
+      BPM_Direction = BPM.smoothed() - BPM_SmoothLong.smoothed();
+
+      last_beat = now;
+      beat_debounce_expire = now + BeatDebounce; // keep track of "debounce"
       }
     // else, wasn't a "new" beat, just "during" current beat
     }
@@ -161,15 +180,20 @@ void processPulse() {
     }
 
   // Beat info, suitable for graphing: pulse,beat,bpm
+  /*
   Serial.print(pulse);
-  Serial.print(" ");
+    Serial.print(" ");
   Serial.print( during_beat * Threshold ); // during-beat is on/off, scale it to the threshold so it's reference/visible.
-  Serial.print(" ");
-  Serial.println(beat_interval); // raw time between beats, around 500 millis (but prints as spike)
-  Serial.print(" ");
-  Serial.println((int)BPM); // BPM will have a different scale than pulse: ~ 80..120
-  Serial.print(" ");
-  Serial.println(BPM_Direction); // BPM will have a different scale than pulse: ~ 80..120
+    Serial.print(" ");
+  Serial.print(beat_interval); // raw time between beats, around 500 millis (but prints as spike)
+    Serial.print(" ");
+  */
+  if (beat_interval) {
+  Serial.print(BPM.smoothed()); // BPM will have a different scale than pulse: ~ 80..120
+    Serial.print(" ");
+  Serial.print(sgn(BPM_Direction)); // BPM will have a different scale than pulse: ~ 80..120
+  Serial.println();
+  }
 
 }
 
