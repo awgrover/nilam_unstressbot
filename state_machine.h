@@ -238,6 +238,7 @@ template<const int ms> boolean sm_delay(StateMachine &sm) {
 // StateXtionFnPtr y = x;
 
 template<int pin, int v> void sm_digitalWrite() { digitalWrite(pin, v); }
+template<int pin, int v> void sm_analogWrite() { analogWrite(pin, v); }
 
 template <int msg> void sm_msg() { Serial.println(msg); }
 template <const char *&msg> void sm_msg() { Serial.println(*msg); }
