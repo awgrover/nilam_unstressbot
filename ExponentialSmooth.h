@@ -13,6 +13,8 @@ class ExponentialSmooth {
   int smoothed() { return (int) _smoothed; }
   operator int() const { return (int) _smoothed; }
 
+  void reset(int v) { _smoothed = v; }
+
   // we intend it to inline
   int average(const int raw_value) { 
     _smoothed = raw_value / factor + _smoothed - _smoothed / factor; 
