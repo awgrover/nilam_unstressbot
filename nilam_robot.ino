@@ -9,11 +9,20 @@
   * Robot-heart beats based on bpm
 
   Plan:
-  * strip back to BPM
-  * make a fake BPM
+  # strip back to BPM
+  # make a fake BPM
     set input_pullup, touch usb-ground:no-peak, otherwise random peaks > 1009..10010
     # looks like it works
   * add lcd
+    * How to do 2 lcds?
+      it's spi. board 1 could be the sd card, which needs 
+      bus: MISO, MOSI and SCK
+      CS is per board
+      MISO is SD only
+      DATA lines are bus
+    * use female headers to space board
+    * ribbon cable? w/connectors
+    * test text
   * incrementally do lcd
     # pic value seems to track
     * setup/do eye load. rate limit: only 1/sec
@@ -36,8 +45,10 @@
 #include "state_machine.h" // awg's state machine stuff: https://github.com/awgrover/misc_arduino_tools
 #include "ExponentialSmooth.h"
 
-// uncommenting this turns on some code that fakes bpm
-#define FAKEBPM
+// uncommenting this turns on some code that fakes bpm during early development
+// #define FAKEBPM
+// uncomment this to output only raw pulse sensor values
+// #define RAWPULSE
 
 // Pulse sensor
 // https://www.adafruit.com/product/1093
@@ -47,10 +58,10 @@ const int LED_DuringBeat = 13; // turn on this LED whenever the pulse-value > th
 const int BeatDebounceBPM = 300; // take the fastest heartrate (~120) times about 4 to give a debounce
 const int BeatDebounce = (1.0 / BeatDebounceBPM) * 60000L; // convert debounce-bpm to millis
 #ifdef FAKEBPM
-  const int Threshold = 1009;
+  const int Threshold = 1013;
   const int BeatAveraging = 5;
 #else
-  const int Threshold = 512; // 
+  const int Threshold = 700; // 
   const int BeatAveraging = 5; // adjust for stability/smoothing. for base BPM
 #endif
 int BPM_Direction = 0; // positive when BPM is going up, negative when going down, magnitude is how fast the change is. 
@@ -98,12 +109,26 @@ BeatParts Beat; // have to convert "per-minute" to durations, so calc later. sta
 
 // Eyes (lcd)
 // http://www.14core.com/driving-the-qd320db16nt9481ra-3-2-tft-480x320-lcd-ili9481-wd-mega/
+// NB: the links are labeled backwards on the site
+// http://www.14core.com/wp-content/uploads/2016/10/ILI9481_V1_Libraries.zip
+//  unzip and then manually install lib:
+//  * sketch:include library:add *.zip library...
+//  * navigate to the "Install libraries"
+//  * select "UTFT", and "OK"
+// http://www.14core.com/wp-content/uploads/2016/10/ILI9481V1_Example_Code.zip
 //
 // In order of the eye pictures ("eye_1", "eye_2"...):
 // Give the corresponding maximum BPM. e.g. { 50, 100 } means: use "eye_1" up through 50 bpm, then "eye_2" up through 100 bpm
 // Probably have 0..min, "absurdly low" and "absurdly high" values
 // first BPM WILL happen when the pulse-sensor is first attached!
-const int EyeBins[] = { 40, 50, 60, 80, 120, 140, 200 }; 
+// FIXME: adaptive: start with whatever the person has, each step is +- 5%?
+#include <UTFT.h>
+// board says: "HVGA" "380x320" "3.2 TFTLCD Shield for arduino mega2560" "HX8357C"
+// Seems to work with "model" ILI9481
+// UTFT.h has a bazillion "models", no guidance
+extern uint8_t SmallFont[]; // for printing stuff to lcd
+UTFT eye1(ILI9481,38,39,40,41);
+const int EyeBins[] = { 40, 60, 70, 80, 90, 100, 200 };
 
 // MP3 sounds
 // https://www.adafruit.com/product/1381
@@ -125,8 +150,13 @@ template <typename T> int sgn(T val) {
 void setup() {
   Serial.begin(115200);
   pinMode( LED_DuringBeat, OUTPUT );
+  eye1.InitLCD();
+  eye1.setFont(SmallFont); // debug/dev uses fonts
+  eye1.clrScr();
+  eye1.print((char*)"Nilam Unstressbot", CENTER, 1);
+
   #ifdef FAKEBPM
-    pinMode( PulseSensorPin, INPUT_PULLUP ); // treat the pin like a cap sensor
+    pinMode( PulseSensorPin, INPUT_PULLUP ); // treat the pin like a bad cap sensor, i.e. antenna
   #endif
   Serial.print("Heart Debounce ");Serial.println( BeatDebounce );
 }
@@ -137,10 +167,8 @@ void loop() {
   
   // Some things need maintenance: "keep it running"
   runBreathing();
-  /*
-  OurHeart.run();
-  playSound();
-  */
+  // OurHeart.run();
+  // playSound();
 
   if (changed) {
     int picture = setEyes();
@@ -148,21 +176,26 @@ void loop() {
     setBreathingRate(); // sets CurrentBreathingRate
 
     // beat
-    Serial.print(BPM.smoothed()); Serial.print(" ");
-    Serial.print(BPM_SmoothLong.smoothed()); Serial.print(" ");
-    Serial.print(sgn(BPM_Direction) * 10); Serial.print(" "); // BPM will have a different scale than direction
+    #ifndef RAWPULSE
+      if (millis() > 2000) {
+        // skip printing noise at startup
+        Serial.print(BPM.smoothed()); Serial.print(" ");
+        Serial.print(BPM_SmoothLong.smoothed()); Serial.print(" ");
+        Serial.print(sgn(BPM_Direction) * 10 + 100); Serial.print(" "); // BPM will have a different scale than direction
 
-    // eyes
-    Serial.print(BPM_ForEyes.smoothed()); Serial.print(" ");
-    Serial.print(picture * 10); Serial.print(" ");
+        // eyes
+        Serial.print(BPM_ForEyes.smoothed()); Serial.print(" ");
+        Serial.print(picture*2 + 10); Serial.print(" ");
 
-    // our breathe
-    Serial.print(CurrentBreathingRate); Serial.print(" ");
+        // our breathe
+        Serial.print(map(CurrentBreathingRate,MinMotorPWM, MaxMotorPWM,0,20)); Serial.print(" ");
 
-    // our heart
-    Serial.print(CurrentBeatRate); Serial.print(" ");
+        // our heart
+        Serial.print(map(CurrentBeatRate,MinOurBeat, MaxOurBeat,20,50)); Serial.print(" ");
 
-    Serial.println();
+        Serial.println();
+        }
+    #endif
     }
   }
 
@@ -183,6 +216,8 @@ bool processPulse() {
   unsigned long now = millis(); // get it once
 
   if (during_beat) {
+    // the pulsesensor tends to go high when removed, for about 3-4 seconds
+    // care?
 
     // we invert debounce, must be "off" for the debounce period before a new beat counts
     if (now > beat_debounce_expire ) {
@@ -228,14 +263,16 @@ bool processPulse() {
     }
 
   // Beat info, suitable for graphing: pulse,beat,bpm
-  /*
-  Serial.print(pulse);
-    Serial.print(" ");
-  Serial.print( during_beat * Threshold ); // during-beat is on/off, scale it to the threshold so it's reference/visible.
-    Serial.print(" ");
-  Serial.print(beat_interval); // raw time between beats, around 500 millis (but prints as spike)
-    Serial.print(" ");
-  */
+  #ifdef RAWPULSE
+    Serial.print(pulse);
+      Serial.print(" ");
+    Serial.print( during_beat * Threshold ); // during-beat is on/off, scale it to the threshold so it's reference/visible.
+      Serial.print(" ");
+    Serial.print(beat_interval); // raw time between beats, around 500 millis (but prints as spike)
+      Serial.print(" ");
+    Serial.println();
+    delay(10); // scrolls too fast otherwise
+  #endif
 
   return changed;
 
