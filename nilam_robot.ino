@@ -21,6 +21,11 @@
       CS is per board
       MISO is SD only
       DATA lines are bus
+    * getting failure with any cables
+      * impedence? driving-end terminating resistors? 100ohm?
+      * spi mode? uh. yes? 
+      * CS should go low for select
+      * 
     * use female headers to space board
     * ribbon cable? w/connectors
     * test text
@@ -101,6 +106,7 @@ int CurrentHeartRate = MinHeartMotorPWM; // got to start somewhere
 //  * navigate to the "Install libraries"
 //  * select "UTFT", and "OK"
 // http://www.14core.com/wp-content/uploads/2016/10/ILI9481V1_Example_Code.zip
+// may be helpful: https://learn.adafruit.com/adafruit-3-5-color-320x480-tft-touchscreen-breakout
 //
 // In order of the eye pictures ("eye_1", "eye_2"...):
 // Give the corresponding maximum BPM. e.g. { 50, 100 } means: use "eye_1" up through 50 bpm, then "eye_2" up through 100 bpm
