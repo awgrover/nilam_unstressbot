@@ -13,6 +13,7 @@
   # make a fake BPM
     set input_pullup, touch usb-ground:no-peak, otherwise random peaks > 1009..10010
     # looks like it works
+  * play with pulsesensor: change smoothing, it's too slow ExponentialSmooth
   * add lcd
     * How to do 2 lcds?
       it's spi. board 1 could be the sd card, which needs 
@@ -80,32 +81,16 @@ ExponentialSmooth BPM_ForEyes( BeatAveraging * 4 ); // smooth over ~4, need resp
 ExponentialSmooth *BPM_Smoothers[] = { &BPM, &BPM_ForEyes, &BPM_SmoothLong }; // refs, no copy
 
 // Breathing just maps BPM to breathing
-const int MotorPin = A1; // pwm control for a cam motor
-const int MinMotorPWM = 200; // slowest breathing "speed": ~= MinBPM
-const int MaxMotorPWM = 1023; // fastest breathing "speed": ~= MaxBPM
-int CurrentBreathingRate = MinMotorPWM; // got to start somewhere. rpms
+const int BreatheMotorPin = A1; // pwm control for a cam motor
+const int MinBreatheMotorPWM = 200; // slowest breathing "speed": ~= MinBPM
+const int MaxBreatheMotorPWM = 1023; // fastest breathing "speed": ~= MaxBPM
+int CurrentBreathingRate = MinBreatheMotorPWM; // got to start somewhere
 
 // our heart just maps BPM to rate
-const int MinOurBeat = 40; // lowest beat rate we want to do: correspond to MinBPM
-const int MaxOurBeat = 80; // highest beat rate we want to do: correspond to MaxBPM
-int CurrentBeatRate = MinOurBeat; // got to start somewhere
-struct BeatParts {
-  unsigned long hardDuration = 1000; // time it takes to drive solenoid fully out: "beat". and any hold time
-  const int hardBeat = 1023; // the PWM value for a hard-beat "how hard". const for use in sm_analogWrite
-  unsigned long hardRest = 59000; // time between beats.
-    // total should be 60,000 millis (60 seconds)
-    // expandable to "ba-dump" eventually
-  };
-constexpr BeatParts BeatExemplar;
-
-// Define heart beat using statemachine
-BeatParts Beat; // have to convert "per-minute" to durations, so calc later. start with exemplar
-// SIMPLESTATEAS(start_hard_beat, (sm_analogWrite<PulseSensorPin, BeatExemplar.hardBeat>), hold_hard_beat)
-// FIXME: rewrite with a fn that fetches beat SIMPLESTATEAS(hold_hard_beat, (sm_delay< Beat.hardDuration >), hard_relax)
-// SIMPLESTATEAS(hard_relax, relaxHeart, hold_hard_relax)
-// FIXME: rewrite with a fn that fetches beat SIMPLESTATEAS(hold_hard_relax, (sm_delay< Beat.hardRest >), start_hard_beat)
-  // maybe add soft beat?
-// STATEMACHINE(OurHeart, start_hard_beat);
+const int HeartMotorPin = A2;
+const int MinHeartMotorPWM = 200; // slowest heart "speed": ~= MinBPM
+const int MaxHeartMotorPWM = 1023; // fastest heart "speed": ~= MaxBPM
+int CurrentHeartRate = MinHeartMotorPWM; // got to start somewhere
 
 // Eyes (lcd)
 // http://www.14core.com/driving-the-qd320db16nt9481ra-3-2-tft-480x320-lcd-ili9481-wd-mega/
@@ -127,6 +112,9 @@ BeatParts Beat; // have to convert "per-minute" to durations, so calc later. sta
 // Seems to work with "model" ILI9481
 // UTFT.h has a bazillion "models", no guidance
 extern uint8_t SmallFont[]; // for printing stuff to lcd
+//           (model,RS,WR,CS,RST,SER=0)
+//                  DS
+// flash-cs is 45
 UTFT eye1(ILI9481,38,39,40,41);
 const int EyeBins[] = { 40, 60, 70, 80, 90, 100, 200 };
 
@@ -155,10 +143,13 @@ void setup() {
   eye1.clrScr();
   eye1.print((char*)"Nilam Unstressbot", CENTER, 1);
 
+  pinMode( BreatheMotorPin, OUTPUT);
+  pinMode( HeartMotorPin, OUTPUT);
+  pinMode( PulseSensorPin, INPUT);
   #ifdef FAKEBPM
     pinMode( PulseSensorPin, INPUT_PULLUP ); // treat the pin like a bad cap sensor, i.e. antenna
   #endif
-  Serial.print("Heart Debounce ");Serial.println( BeatDebounce );
+  Serial.println("Start");
 }
 
 void loop() {
@@ -167,12 +158,13 @@ void loop() {
   
   // Some things need maintenance: "keep it running"
   runBreathing();
+  runHeart();
   // OurHeart.run();
   // playSound();
 
   if (changed) {
     int picture = setEyes();
-    setOurHeart(); // sets CurrentBeatRate
+    setOurHeart(); // sets CurrentHeartRate
     setBreathingRate(); // sets CurrentBreathingRate
 
     // beat
@@ -188,10 +180,10 @@ void loop() {
         Serial.print(picture*2 + 10); Serial.print(" ");
 
         // our breathe
-        Serial.print(map(CurrentBreathingRate,MinMotorPWM, MaxMotorPWM,0,20)); Serial.print(" ");
+        Serial.print(map(CurrentBreathingRate,MinBreatheMotorPWM, MaxBreatheMotorPWM,0,20)); Serial.print(" ");
 
         // our heart
-        Serial.print(map(CurrentBeatRate,MinOurBeat, MaxOurBeat,20,50)); Serial.print(" ");
+        Serial.print(map(CurrentHeartRate,MinHeartMotorPWM, MaxHeartMotorPWM,20,50)); Serial.print(" ");
 
         Serial.println();
         }
@@ -317,15 +309,15 @@ void updateEyes( int picture_index ) {
 void setOurHeart() {
   // not much to do, runBeat() does the actual beating
   // FIXME: just use exact BPM? or, slightly slower BPM
-  CurrentBeatRate = map(BPM.smoothed(), MinBPM, MaxBPM, MinOurBeat, MaxOurBeat);
+  CurrentHeartRate = map(BPM.smoothed(), MinBPM, MaxBPM, MinHeartMotorPWM, MaxHeartMotorPWM);
   // maybe a "sleep" rate if bpm == 0
   }
 
 void setBreathingRate() {
   // not much to do, runBreathing() does the actual breathing
-  CurrentBreathingRate = map(BPM.smoothed(), MinBPM, MaxBPM, MinMotorPWM, MaxMotorPWM);
+  CurrentBreathingRate = map(BPM.smoothed(), MinBPM, MaxBPM, MinBreatheMotorPWM, MaxBreatheMotorPWM);
   // map doesn't constrain
-  CurrentBreathingRate = constrain( CurrentBreathingRate, MinMotorPWM, MaxMotorPWM);
+  CurrentBreathingRate = constrain( CurrentBreathingRate, MinBreatheMotorPWM, MaxBreatheMotorPWM);
   // maybe a "sleep" rate if bpm == 0
   }
 
@@ -336,7 +328,17 @@ void runBreathing() {
   static ExponentialSmooth motor_speed( 10 ); // the factor is how many samples to reach target: how smooth the change is
 
   // We expect to get called each loop, so use the smoothing to adjust speed towards target
-  analogWrite(MotorPin, motor_speed.average( CurrentBreathingRate ) ); // pretty simple
+  analogWrite(BreatheMotorPin, motor_speed.average( CurrentBreathingRate ) ); // pretty simple
+  }
+
+void runHeart() {
+  // heart is a cam on a motor, so PWM driven
+  // so, smoothly change speed from current to target
+  // may need to update every loop
+  static ExponentialSmooth motor_speed( 10 ); // the factor is how many samples to reach target: how smooth the change is
+
+  // We expect to get called each loop, so use the smoothing to adjust speed towards target
+  analogWrite(HeartMotorPin, motor_speed.average( CurrentHeartRate ) ); // pretty simple
   }
 
 /*
@@ -392,18 +394,5 @@ void pickAndPlay() {
     // FIXME: what do we do to start a sound? set a var? let interrupt do the right thing?
 
   }
-
-void relaxHeart() {
-  // Do the relax part of our heart, which includes recalculating rate
-
-  analogWrite<PulseSensorPin, 0>
-  // let's only recalculate the durations during a relax
-  // CurrentBeatRate in per-minute
-  // hardbeat..relax = 1 cycle
-  // so scale the exemplar
-  Beat.hardDuration = 1.0/CurrentBeatRate * BeatExemplar.hardDuration:
-  Beat.hardRest = 1.0/CurrentBeatRate * BeatExemplar.hardRest;
-  }
-
 
 */
