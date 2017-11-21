@@ -172,6 +172,7 @@ template <typename T> int sgn(T val) {
 void setup() {
   Serial.begin(115200);
   Serial.println("Setup");
+  Serial1.begin(57600); // tx1/rx1 between master/slave
 
   // slave detect
   pinMode( SlaveDetect, INPUT_PULLUP );
@@ -218,6 +219,30 @@ void setup() {
 }
 
 void loop() {
+  if (is_master) { while(1) master_loop(); }
+  else { while(1) slave_loop(); }
+  }
+
+void slave_loop() {
+  // for debugging, let console enter '0'..'9'
+  if (Serial.available() > 0) {
+    byte which_picture = Serial.read();
+    which_picture -= '0'; // correct for console '0'..'9' which isn't the value 0..9
+    updateEyes( which_picture );
+    }
+
+  // If the tx1/rx1 is left hanging, you will get a stream of 0's
+  // which will fill the 62byte buffer
+  if (Serial1.available() > 0) {
+    Serial.print("incoming ");
+    byte which_picture = Serial1.read(); // binary
+    Serial.print("incoming "); Serial.print( Serial1.available());Serial.print(" ");Serial.write( (which_picture + '0') );Serial.println();
+    updateEyes( which_picture );
+    }
+
+  }
+
+void master_loop() {
   bool changed = processPulse(); // let's process it as often as we can, each time through the loop
   // FIXME only if changed most of these
   
@@ -358,6 +383,8 @@ int setEyes() {
 
   if (which_picture != last_picture) {
     last_picture = which_picture;
+    // FIXME: send which_picture to slave
+    Serial1.write( (byte) which_picture );
     updateEyes( which_picture );
     }
 
@@ -365,7 +392,7 @@ int setEyes() {
   }
 
 void updateEyes( int picture_index ) {
-  // FIXME: Do it in an interrupt routine...
+  // FIXME: Do the draw in an interrupt routine...
   Serial.print("Picture");
   Serial.println(picture_index);
 
