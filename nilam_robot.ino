@@ -1,6 +1,14 @@
 /*
   Code for Nilam Sari.
 
+  Designed for 2 communicating mega256's.
+  #1 is the master, it reads the bpm, does all the calculations, and runs everything except eye #2
+  #2 is a the slave, it gets the eye calculation and displays the correct eye #2 image.
+  "Slave" is signaled by testing pin 12 for low (by setting it input-pullup): so ground 12 for slave.
+  Same .ino so we don't have to worry about which code goes where.
+  Same sd-card data, likewise.
+  Communication is via serial on TX1, RX1.
+
   Everything uses the pulse sensor beats-per-minute, bpm.
 
   * LCD shows different images based on the bpm
@@ -22,7 +30,8 @@
       MISO is SD only
       DATA lines are bus
     * getting failure with any cables
-      * impedence? driving-end terminating resistors? 100ohm?
+      * impedence? driving-end terminating resistors? 100ohm? "source termination". in series
+        e.g. impedence matching
       * spi mode? uh. yes? 
       * CS should go low for select
       * 
@@ -114,14 +123,16 @@ int CurrentHeartRate = MinHeartMotorPWM; // got to start somewhere
 // first BPM WILL happen when the pulse-sensor is first attached!
 // FIXME: adaptive: start with whatever the person has, each step is +- 5%?
 #include <UTFT.h>
-// board says: "HVGA" "380x320" "3.2 TFTLCD Shield for arduino mega2560" "HX8357C"
-// Seems to work with "model" ILI9481
+// http://www.rinkydinkelectronics.com/resource/UTFT/UTFT.pdf
+//
+// board says: "HVGA" "480x320" "3.2 TFTLCD Shield for arduino mega2560" "HX8357C"
+// Seems to work with "model" ILI9481, and HX8357C
 // UTFT.h has a bazillion "models", no guidance
 extern uint8_t SmallFont[]; // for printing stuff to lcd
-//           (model,RS,WR,CS,RST,SER=0)
-//                  DS
+//       (model,  RS,WR,CS,RST,SER=0)
+//                DS
 // flash-cs is 45
-UTFT eye1(ILI9481,38,39,40,41);
+UTFT eye1(HX8357C,38,39,40,41);
 const int EyeBins[] = { 40, 60, 70, 80, 90, 100, 200 };
 
 // MP3 sounds
@@ -352,6 +363,7 @@ void playSound() {
   // decide when to play some sound on the MP3 thingy
   static unsigned long next_sound = millis() + 2000; // don't bother at startup for 2seconds
 
+  // FIXME: move to state machine
   // while playing, or when it's time to decide...
   if (now > next_sound) {
     switch (SoundState) {
