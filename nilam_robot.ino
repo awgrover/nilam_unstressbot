@@ -109,31 +109,46 @@ int CurrentHeartRate = MinHeartMotorPWM; // got to start somewhere
 // Eyes (lcd)
 // http://www.14core.com/driving-the-qd320db16nt9481ra-3-2-tft-480x320-lcd-ili9481-wd-mega/
 // NB: the links are labeled backwards on the site
-// http://www.14core.com/wp-content/uploads/2016/10/ILI9481_V1_Libraries.zip
-//  unzip and then manually install lib:
-//  * sketch:include library:add *.zip library...
-//  * navigate to the "Install libraries"
-//  * select "UTFT", and "OK"
-// http://www.14core.com/wp-content/uploads/2016/10/ILI9481V1_Example_Code.zip
-// may be helpful: https://learn.adafruit.com/adafruit-3-5-color-320x480-tft-touchscreen-breakout
+// BUT, we are going to use the library at
+// https://github.com/Bodmer/TFT_HX8357
+// * "download" the zip
+// * sketch:include library:add *.zip library...
+// I don't think you need the adafruit gfx library
 //
-// In order of the eye pictures ("eye_1", "eye_2"...):
+#include <TFT_HX8357.h>
+//
+// board says: "HVGA" "480x320" "3.2 TFTLCD Shield for arduino mega2560" "HX8357C"
+// Seems to work with "model" ILI9481, and HX8357C
+// The board does NOT support SPI to the LCD (the built-in SD card IS SPI only).
+extern uint8_t SmallFont[]; // for printing stuff to lcd
+// The lcd shield lines up with the mega256's pins.
+// the Bodmer library uses the 16-bit databus, no spi for the LCD.
+// So, one LCD per mega.
+TFT_HX8357 eye = TFT_HX8357(); // atypical instantiation
+// choice of flag seems to have no effect on drawing speed
+const int BottomUp_BMP=1; // flag for drawing images "standard Bottom-Up bit maps"
+const int TopDown_BMP=1; // flag for drawing images "inverted Top-Down bitmaps"
+
+#include <SD.h>
+// The built in SD card is SPI only
+// lcd-CS=40, sd-card-CS=53
+const int LCD_CS = 40; // But, I don't think SPI works for the LCD at all
+const int SDCard_CS = 53;
+
+// In order of the eye pictures ("eye_0.bmp", "eye_1.bmp"...):
 // Give the corresponding maximum BPM. e.g. { 50, 100 } means: use "eye_1" up through 50 bpm, then "eye_2" up through 100 bpm
 // Probably have 0..min, "absurdly low" and "absurdly high" values
 // first BPM WILL happen when the pulse-sensor is first attached!
 // FIXME: adaptive: start with whatever the person has, each step is +- 5%?
-#include <UTFT.h>
-// http://www.rinkydinkelectronics.com/resource/UTFT/UTFT.pdf
-//
-// board says: "HVGA" "480x320" "3.2 TFTLCD Shield for arduino mega2560" "HX8357C"
-// Seems to work with "model" ILI9481, and HX8357C
-// UTFT.h has a bazillion "models", no guidance
-extern uint8_t SmallFont[]; // for printing stuff to lcd
-//       (model,  RS,WR,CS,RST,SER=0)
-//                DS
-// flash-cs is 45
-UTFT eye1(HX8357C,38,39,40,41);
 const int EyeBins[] = { 40, 60, 70, 80, 90, 100, 200 };
+char eye_file_name[]="eye_0.bmp"; // will be modified as needed
+const int eye_digit_index = 4; // which char to change
+// Eye images are files named "eye_0.bmp" through "eye_7.bmp"
+// They are 480x320, 24 bit/pixel, no-compression, .bmp
+// see "setRotation" below if they are upside down.
+// The imagemagick command to make them is
+// mogrify -format bmp -type truecolor -depth 24 -compress None eye*.png
+// Files size will be exactly: 460938 bytes ( 480 * 320 * 3 + 138 )
 
 // MP3 sounds
 // https://www.adafruit.com/product/1381
@@ -155,10 +170,24 @@ template <typename T> int sgn(T val) {
 void setup() {
   Serial.begin(115200);
   pinMode( LED_DuringBeat, OUTPUT );
-  eye1.InitLCD();
-  eye1.setFont(SmallFont); // debug/dev uses fonts
-  eye1.clrScr();
-  eye1.print((char*)"Nilam Unstressbot", CENTER, 1);
+
+  // We will always use the sdcard
+  if (SD.begin(SDCard_CS)) {
+    Serial.println(F("SD.begin failed"));
+  }
+  else {
+    Serial.println(F("SDCard 'begin'"));
+  }
+
+  eye.fillScreen(TFT_BLACK);
+  // 3: original image is landscape, will be upright when USB is to the left
+  // 1: original image is landscape, will be upright when USB is to the right
+  eye.setRotation(3);
+
+  //eye.InitLCD();
+  //eye1.setFont(SmallFont); // debug/dev uses fonts
+  //eye1.clrScr();
+  //eye1.print((char*)"Nilam Unstressbot", CENTER, 1);
 
   pinMode( BreatheMotorPin, OUTPUT);
   pinMode( HeartMotorPin, OUTPUT);
@@ -317,10 +346,14 @@ int setEyes() {
   }
 
 void updateEyes( int picture_index ) {
-  // FIXME: pick "eye_$i", copy to lcd
-  // Do it in an interrupt routine...
-  // Serial.print("Picture");
-  // Serial.println(picture_index);
+  // FIXME: Do it in an interrupt routine...
+  Serial.print("Picture");
+  Serial.println(picture_index);
+
+  // we assume 1 digit
+  eye_file_name[ eye_digit_index ] = '0' + picture_index;
+  Serial.println(eye_file_name);
+  drawBMP(eye_file_name, 0, 0, BottomUp_BMP);
   }
 
 void setOurHeart() {
