@@ -21,8 +21,8 @@
   # make a fake BPM
     set input_pullup, touch usb-ground:no-peak, otherwise random peaks > 1009..10010
     # looks like it works
-  * play with pulsesensor: change smoothing, it's too slow ExponentialSmooth
-  * add lcd
+  # play with pulsesensor: change smoothing, it's too slow ExponentialSmooth
+  # add lcd
     * How to do 2 lcds?
       it's spi. board 1 could be the sd card, which needs 
       bus: MISO, MOSI and SCK
@@ -35,12 +35,10 @@
       * spi mode? uh. yes? 
       * CS should go low for select
       * 
-    * use female headers to space board
-    * ribbon cable? w/connectors
-    * test text
-  * incrementally do lcd
-    # pic value seems to track
-    * setup/do eye load. rate limit: only 1/sec
+  * dual-mega communications
+    * slave detect
+    * master sends picture index
+    * slave uses it
   * add LED analog for solenoid
     # ourbeat rate seems ok
   * add LED analog for cam-motor
@@ -64,6 +62,10 @@
 // #define FAKEBPM
 // uncomment this to output only raw pulse sensor values
 // #define RAWPULSE
+
+// Slave/master
+boolean is_master;
+const int SlaveDetect = 12;
 
 // Pulse sensor
 // https://www.adafruit.com/product/1093
@@ -169,32 +171,49 @@ template <typename T> int sgn(T val) {
 
 void setup() {
   Serial.begin(115200);
-  pinMode( LED_DuringBeat, OUTPUT );
+  Serial.println("Setup");
+
+  // slave detect
+  pinMode( SlaveDetect, INPUT_PULLUP );
+  is_master = digitalRead(SlaveDetect); // high==open==master
+  Serial.println( is_master ? F("MASTER") : F("SLAVE") );
+
+  if (is_master) {
+    pinMode( LED_DuringBeat, OUTPUT );
+
+    pinMode( BreatheMotorPin, OUTPUT);
+    pinMode( HeartMotorPin, OUTPUT);
+    pinMode( PulseSensorPin, INPUT);
+    #ifdef FAKEBPM
+      pinMode( PulseSensorPin, INPUT_PULLUP ); // treat the pin like a bad cap sensor, i.e. antenna
+    #endif
+  }
+
+
+  // Everybody does this
 
   // We will always use the sdcard
   if (SD.begin(SDCard_CS)) {
-    Serial.println(F("SD.begin failed"));
-  }
-  else {
     Serial.println(F("SDCard 'begin'"));
   }
+  else {
+    Serial.println(F("SD.begin failed"));
+  }
 
+  eye.init();
   eye.fillScreen(TFT_BLACK);
+  eye.drawLine(0,0, 320, 480, TFT_RED);
+
   // 3: original image is landscape, will be upright when USB is to the left
   // 1: original image is landscape, will be upright when USB is to the right
   eye.setRotation(3);
 
-  //eye.InitLCD();
   //eye1.setFont(SmallFont); // debug/dev uses fonts
   //eye1.clrScr();
   //eye1.print((char*)"Nilam Unstressbot", CENTER, 1);
 
-  pinMode( BreatheMotorPin, OUTPUT);
-  pinMode( HeartMotorPin, OUTPUT);
-  pinMode( PulseSensorPin, INPUT);
-  #ifdef FAKEBPM
-    pinMode( PulseSensorPin, INPUT_PULLUP ); // treat the pin like a bad cap sensor, i.e. antenna
-  #endif
+  updateEyes(0);
+
   Serial.println("Start");
 }
 
